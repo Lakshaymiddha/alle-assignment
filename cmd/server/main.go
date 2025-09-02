@@ -4,19 +4,19 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/task-management-service/internal/httpapi"
-	"github.com/task-management-service/internal/task"
+	"github.com/alle-assignment/internal/httpapi"
+	"github.com/alle-assignment/internal/task"
 )
 
 func main() {
 	repo := task.NewInMemoryRepository()
 	svc := task.NewService(repo)
-	h := httpapi.New(svc)
+	handler := httpapi.New(svc)
 
 	mux := http.NewServeMux()
-	h.Register(mux)
+	handler.RegisterRoutes(mux)
 
-	addr := ":8080"
-	log.Printf("task-svc listening on %s", addr)
+	const addr = ":8080"
+	log.Printf("Task Management Service listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

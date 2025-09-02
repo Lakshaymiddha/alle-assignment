@@ -4,18 +4,22 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 var ErrNotFound = errors.New("task not found")
 
-// Repository abstracts persistence.
+type Cursor struct {
+	Time time.Time `json:"t"`
+	ID   int64     `json:"id"`
+}
+
 type Repository interface {
 	Create(t Task) (Task, error)
 	GetByID(id int64) (Task, error)
 	Update(id int64, in UpdateTaskInput) (Task, error)
 	Delete(id int64) error
-	// List supports optional status filter + pagination.
-	List(status *Status, page, pageSize int) ([]Task, int, error)
+	ListByCursor(after *Cursor, limit int, status *Status) ([]Task, *Cursor, error)
 }
 
 type InMemoryRepository struct {
@@ -31,6 +35,13 @@ func NewInMemoryRepository() *InMemoryRepository {
 func (r *InMemoryRepository) Create(t Task) (Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now().UTC()
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	if t.UpdatedAt.IsZero() {
+		t.UpdatedAt = t.CreatedAt
+	}
 	r.seq++
 	t.ID = r.seq
 	r.items[t.ID] = t
@@ -63,6 +74,7 @@ func (r *InMemoryRepository) Update(id int64, in UpdateTaskInput) (Task, error) 
 	if in.Status != nil {
 		t.Status = *in.Status
 	}
+	t.UpdatedAt = time.Now().UTC()
 	r.items[id] = t
 	return t, nil
 }
@@ -70,41 +82,53 @@ func (r *InMemoryRepository) Update(id int64, in UpdateTaskInput) (Task, error) 
 func (r *InMemoryRepository) Delete(id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.items[id]; !ok {
+	if _, exists := r.items[id]; !exists {
 		return ErrNotFound
 	}
 	delete(r.items, id)
 	return nil
 }
 
-func (r *InMemoryRepository) List(status *Status, page, pageSize int) ([]Task, int, error) {
+func (r *InMemoryRepository) ListByCursor(after *Cursor, limit int, status *Status) ([]Task, *Cursor, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var all []Task
+	var out []Task
 	for _, t := range r.items {
 		if status != nil && t.Status != *status {
 			continue
 		}
-		all = append(all, t)
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-
-	total := len(all)
-	if pageSize <= 0 {
-		pageSize = 10
-	}
-	if page <= 0 {
-		page = 1
+		if after != nil {
+			if t.CreatedAt.Before(after.Time) || (t.CreatedAt.Equal(after.Time) && t.ID <= after.ID) {
+				continue
+			}
+		}
+		out = append(out, t)
 	}
 
-	start := (page - 1) * pageSize
-	if start >= total {
-		return []Task{}, total, nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+
+	if limit <= 0 {
+		limit = 10
 	}
-	end := start + pageSize
-	if end > total {
-		end = total
+	if limit > len(out) {
+		limit = len(out)
 	}
-	return all[start:end], total, nil
+	result := out[:limit]
+
+	var next *Cursor
+	if len(out) > limit {
+		last := result[len(result)-1]
+		next = &Cursor{Time: last.CreatedAt, ID: last.ID}
+	}
+
+	return result, next, nil
 }
+
+// Compile-time check that InMemoryRepository implements Repository interface
+var _ Repository = (*InMemoryRepository)(nil)
