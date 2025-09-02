@@ -108,9 +108,9 @@ Should return `200 OK` with `{ "status": "ok" }`
 
 ### 2. Create Task
 ```json
-`curl -i -X POST http://localhost:8080/tasks \
+curl -i -X POST http://localhost:8080/tasks \
   -H "Content-Type: application/json" \
-  -d '{"title":"Write README","description":"Draft documentation","status":"Pending"}'` 
+  -d '{"title":"Write README","description":"Draft documentation","status":"Pending"}'
 ```
 -   **Response**: `201 Created` with JSON of created task
     
@@ -133,7 +133,7 @@ curl -i http://localhost:8080/tasks/1
 ```json
 curl -i -X PUT http://localhost:8080/tasks/1 \
   -H "Content-Type: application/json" \
-  -d '{"status":"InProgress"}'
+  -d '{"status":"InProgress"}
 ```  
 
 -   **Response**: `200 OK` with updated task JSON
@@ -187,7 +187,6 @@ curl -i "http://localhost:8080/tasks?limit=5&cursor=<paste-next_cursor-here>"
 - **Benefits**:
   - More efficient and stable than offset pagination, especially for dynamic datasets.
   - Uses opaque encoding to abstract pagination details from clients.
-  - See: [Merge.dev](https://merge.dev), [Speakeasy](https://www.speakeasy.com)
 
 ---
 
@@ -197,10 +196,59 @@ curl -i "http://localhost:8080/tasks?limit=5&cursor=<paste-next_cursor-here>"
 - **Containerization + Kubernetes + HPA** can be used for elastic scalability.
 
 ---
-
-### Inter-Service Communication
+### Inter-Service Communication: Detailed Steps
 - **REST** or **gRPC** for synchronous APIs.
 - **Kafka/NATS** for asynchronous, event-driven use cases such as `task.created` events.
+
+#### 1. RESTful Communication (synchronous HTTP JSON)
+**Use case**: Task Service needs to fetch User details from a User Service on-demand.
+
+**Steps**:
+1. **Expose a REST endpoint** in User Service, e.g.:
+```json
+GET /users/{userId}  
+```
+  **Response**: { "id": "...", "name": "...", ... }
+2. **Task Service** makes an HTTP GET request using `net/http`, e.g., `http.Get("http://user-svc/users/123")`.
+3. **Parse JSON response** into a Go struct and handle errors or missing users.
+4. **Use the user data** to populate task owner information or validate permissions during task creation.
+5. **Add retry logic, timeouts**, and **circuit breakers** to handle API failures gracefully and improve resilience.  
+
+#### 2. gRPC Communication (synchronous, high-performance)
+**Use case**: Task Service needs frequent, low-latency interaction with User Service (e.g., permission check per request).
+**Steps**:
+1. **Define a `.proto` file** with service and messages, e.g.:
+```json
+proto
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+}
+```
+2. **Generate Go client and server stubs** using `protoc`.
+    
+3. **Implement gRPC server** in User Service and **gRPC client** in Task Service.
+    
+4. **Call `GetUser(...)`** directly within Task handlers gRPC ensures efficient binary communication over HTTP/2.
+    
+5. **Handle context** timeouts, retries, and errors for robustness.
+    
+6. **Beneficial for** strong typing, streaming, backward compatibility, and high-throughput needs.
+
+#### Message Queue Communication (asynchronous, event-driven)
+
+**Use case**: After task creation, Task Service notifies other services (e.g., Notification or Audit Services) without waiting for them to respond.
+
+**Steps**:
+
+1.  **Publish an event** to a message broker (e.g., Kafka, RabbitMQ) with a topic like `task.created`, including payload `{ "taskId": 1, "userId": 123, ... }`.
+    
+2.  **Consumer services** (e.g., Notification Service) **subscribe** to the topic and process events asynchronously.
+    
+3.  The Task Service continues without delay, decoupling creation from downstream tasks.
+    
+4.  Implement **idempotency**, retries, and ordering safeguards to ensure reliable processing.
+    
+5.  **Scales well** and improves resilience, particularly for non-critical or bulk workflows.
 
 ---
 
@@ -214,11 +262,17 @@ curl -i "http://localhost:8080/tasks?limit=5&cursor=<paste-next_cursor-here>"
 
 ## Future Enhancements
 - Migrate to **Postgres** with schema migrations.
-- Auto-generate **OpenAPI specs** or **gRPC service definitions**.
-- Add **Dockerfile**, **Helm charts**, and **K8s manifests**.
+- Add **Dockerfile**, **Kubernetes manifests**.
 - Integrate **authentication/authorization** (JWT, API keys).
-- Add **unit & integration tests** and a **CI workflow**.
+- Add **integration tests** and a **CI workflow**.
 - Include **metrics** and **distributed tracing** for observability.
+
+### Inter service communication
+#### Hybrid Architecture — Combine All Three Styles
+  Most scalable systems mix communication styles:
+- **REST**: For external or team-facing APIs.
+- **gRPC**: For fast, internal microservice-to-microservice calls.
+- **Message queues**: For asynchronous processing, event streams, and decoupling.
 
 
 ## FAQs
